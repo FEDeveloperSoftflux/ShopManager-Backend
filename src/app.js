@@ -18,6 +18,13 @@ app.use(express.json({ limit: '10mb' }));
 // Connect DB
 connectDatabase();
 
+app.get("/", (req, res) => {
+  res.status(200).json({
+    message: "Shop Manager Backend is running successfully!",
+    status: "OK",
+  });
+});
+
 // Mount Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/items', itemRoutes);
