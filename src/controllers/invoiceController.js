@@ -2,15 +2,25 @@ import { InvoiceModel } from '../models/invoiceModel.js';
 import { ItemModel } from '../models/itemModel.js';
 
 export const invoiceController = {
+  /**
+   * GET /api/invoices
+   * Returns all invoices sorted by most recent first.
+   */
   async getAllInvoices(req, res) {
     try {
       const invoices = await InvoiceModel.find().sort({ createdAt: -1 });
       res.json(invoices);
     } catch (err) {
+      console.error('Get invoices error:', err.message);
       res.status(500).json({ error: err.message });
     }
   },
 
+  /**
+   * POST /api/invoices
+   * Body: full invoice object
+   * Creates a new invoice and deducts stock quantities.
+   */
   async createInvoice(req, res) {
     const { invoiceNo, dateTime, units, subtotal, discount, tax, total, paymentMethod, cashier, items, loanDetails } = req.body;
     try {
@@ -27,24 +37,50 @@ export const invoiceController = {
         items,
         loanDetails
       });
+
       await newInvoice.save();
 
-      // Deduct stock quantity in MongoDB
+      // Deduct stock for each sold item
       if (items && Array.isArray(items)) {
-        for (const it of items) {
-          await ItemModel.findOneAndUpdate(
-            { id: it.id },
-            { $inc: { stock: -Number(it.quantity || 1) } }
-          );
+        for (const soldItem of items) {
+          const dbItem = await ItemModel.findOne({ id: soldItem.id });
+          if (dbItem) {
+            const newStock = (Number(dbItem.stock) || 0) - Number(soldItem.quantity || 1);
+            await ItemModel.findOneAndUpdate({ id: soldItem.id }, { stock: newStock });
+          }
         }
       }
 
       res.status(201).json({ message: 'Invoice saved successfully' });
     } catch (err) {
+      console.error('Create invoice error:', err.message);
       res.status(500).json({ error: err.message });
     }
   },
 
+  /**
+   * DELETE /api/invoices/:invoiceNo
+   * Deletes an invoice by its invoiceNo.
+   */
+  async deleteInvoice(req, res) {
+    const { invoiceNo } = req.params;
+    try {
+      const result = await InvoiceModel.findOneAndDelete({ invoiceNo });
+      if (!result) {
+        return res.status(404).json({ error: 'Invoice not found' });
+      }
+      res.json({ message: 'Invoice deleted successfully' });
+    } catch (err) {
+      console.error('Delete invoice error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  },
+
+  /**
+   * PUT /api/invoices/:invoiceNo/payment
+   * Body: { amountPaid, date }
+   * Records a loan payment against an invoice.
+   */
   async addLoanPayment(req, res) {
     const { invoiceNo } = req.params;
     const { amountPaid, date } = req.body;
@@ -55,14 +91,10 @@ export const invoiceController = {
       }
 
       const paymentAmount = Number(amountPaid);
-      const newPayments = [
-        ...(invoice.loanDetails.payments || []),
-        { date, amount: paymentAmount }
-      ];
+      const currentPaid = Number(invoice.loanDetails.amountPaid) || 0;
+      const totalPaid = currentPaid + paymentAmount;
+      const remaining = Math.max(0, Number(invoice.total) - totalPaid);
 
-      const totalPaid = Number(invoice.loanDetails.amountPaid) + paymentAmount;
-      const remaining = Math.max(0, Number(invoice.loanDetails.outstandingAmount) - paymentAmount);
-      
       let newStatus = 'Unpaid';
       if (remaining === 0) {
         newStatus = 'Paid';
@@ -70,15 +102,30 @@ export const invoiceController = {
         newStatus = 'Partially Paid';
       }
 
-      invoice.loanDetails.amountPaid = totalPaid;
-      invoice.loanDetails.outstandingAmount = remaining;
-      invoice.loanDetails.status = newStatus;
-      invoice.loanDetails.payments = newPayments;
+      const newPayment = { date, amount: paymentAmount };
+      const existingPayments = invoice.loanDetails.payments || [];
 
-      await invoice.save();
+      const updatedLoanDetails = {
+        customerName: invoice.loanDetails.customerName,
+        customerPhone: invoice.loanDetails.customerPhone,
+        dueDate: invoice.loanDetails.dueDate,
+        status: newStatus,
+        amountPaid: totalPaid,
+        outstandingAmount: remaining,
+        payments: [...existingPayments, newPayment]
+      };
 
-      res.json({ message: 'Loan payment added successfully', updatedLoanDetails: invoice.loanDetails });
+      await InvoiceModel.findOneAndUpdate(
+        { invoiceNo },
+        { loanDetails: updatedLoanDetails }
+      );
+
+      res.json({
+        message: 'Loan payment added successfully',
+        updatedLoanDetails
+      });
     } catch (err) {
+      console.error('Loan payment error:', err.message);
       res.status(500).json({ error: err.message });
     }
   }

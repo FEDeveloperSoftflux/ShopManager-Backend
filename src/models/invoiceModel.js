@@ -10,7 +10,9 @@ const InvoiceItemSchema = new mongoose.Schema({
 
 const LoanPaymentSchema = new mongoose.Schema({
   date: { type: String, required: true },
-  amount: { type: Number, required: true }
+  amount: { type: Number, required: true },
+  method: { type: String },
+  cashier: { type: String }
 });
 
 const LoanDetailsSchema = new mongoose.Schema({
@@ -33,6 +35,8 @@ const InvoiceSchema = new mongoose.Schema({
   total: { type: Number, required: true },
   paymentMethod: { type: String, required: true },
   cashier: { type: String, required: true },
+  amountTendered: { type: Number },
+  cashChange: { type: Number },
   items: { type: [InvoiceItemSchema], default: [] },
   loanDetails: { type: LoanDetailsSchema, default: null }
 }, { timestamps: true });
